@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>おかわり君 ホームランダービー</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #222;
+            color: #fff;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+            touch-action: none;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+        }
+        canvas {
+            background-color: #2e8b57;
+            display: block;
+            border-radius: 8px;
+            width: 400px;
+            height: 600px;
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            font-weight: bold;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+        #result-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            z-index: 10;
+        }
+        .btn {
+            margin-top: 15px;
+            padding: 14px 28px;
+            font-size: 20px;
+            background-color: #ff9800;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s, transform 0.1s;
+        }
+        .btn:active {
+            transform: scale(0.95);
+        }
+        .btn:hover {
+            background-color: #e68a00;
+        }
+        .studio-text {
+            position: absolute;
+            bottom: 20px;
+            font-size: 14px;
+            color: #aaa;
+            letter-spacing: 1px;
+            pointer-events: none;
+        }
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <div id="ui-overlay">
+        <div id="balls-text">残り球数: 10</div>
+        <div id="score-text">本塁打: 0本</div>
+    </div>
+    <div id="result-screen">
+        <h1 id="result-title" style="margin: 0; font-size: 32px; text-align: center;">おかわり君<br>ホームランダービー</h1>
+        <p id="result-desc" style="font-size: 18px; margin: 15px 0;">全10球で何本打てるか挑戦！</p>
+        <button id="start-btn" class="btn">プレイ開始</button>
+        <div class="studio-text">Blue Carrot Studio</div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const LOGICAL_WIDTH = 400;
+const LOGICAL_HEIGHT = 600;
+const dpr = window.devicePixelRatio || 1;
+
+canvas.width = LOGICAL_WIDTH * dpr;
+canvas.height = LOGICAL_HEIGHT * dpr;
+canvas.style.width = LOGICAL_WIDTH + 'px';
+canvas.style.height = LOGICAL_HEIGHT + 'px';
+
+ctx.scale(dpr, dpr);
+
+const ballsText = document.getElementById('balls-text');
+const scoreText = document.getElementById('score-text');
+const resultScreen = document.getElementById('result-screen');
+const resultTitle = document.getElementById('result-title');
+const resultDesc = document.getElementById('result-desc');
+const startBtn = document.getElementById('start-btn');
+
+let audioCtx = null;
+
+function initAudio() {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+}
+
+function playPitchSE() {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(150, audioCtx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.15);
+}
+
+function playSwingSE() {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(120, audioCtx.currentTime);
+    osc.frequency.linearRampToValueAtTime(300, audioCtx.currentTime + 0.08);
+    osc.frequency.linearRampToValueAtTime(80, audioCtx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.15);
+}
+
+function playHitSE() {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1500, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.2);
+    
+    gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.22);
+    
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.22);
+}
+
+function playHomerunFanfareSE() {
+    if (!audioCtx) return;
+    
+    const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51];
+    notes.forEach((freq, idx) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime + idx * 0.12);
+        
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime + idx * 0.12);
+        gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + idx * 0.12 + 0.4);
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(audioCtx.currentTime + idx * 0.12);
+        osc.stop(audioCtx.currentTime + idx * 0.12 + 0.4);
+    });
+}
+
+function playOutSE() {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, audioCtx.currentTime);
+    osc.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+    gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.2);
+}
+
+let remainingBalls = 10;
+let homeruns = 0;
+let gameState = 'START';
+let resultMessage = '';
+let resultMessageTimer = 0;
+
+const START_BAT_ANGLE = Math.PI * 0.33; 
+const END_BAT_ANGLE = Math.PI * 1.67;   
+
+const batter = {
+    x: 230,
+    y: 505,
+    batAngle: START_BAT_ANGLE,
+    isSwinging: false,
+    swingProgress: 0
+};
+
+const ball = {
+    x: 200,
+    y: 130,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    curveAccelX: 0,
+    radius: 6,
+    isHit: false,
+    height: 0
+};
+
+const homeBase = { x: 200, y: 510 };
+
+window.addEventListener('pointerdown', (e) => {
+    initAudio();
+    if (e.target.tagName === 'BUTTON') return;
+    handleInput();
+});
+
+window.addEventListener('keydown', (e) => {
+    initAudio();
+    if (e.code === 'Space') {
+        if (gameState === 'START' || gameState === 'GAMEOVER') {
+            resetGame();
+        } else {
+            handleInput();
+        }
+    }
+});
+
+startBtn.addEventListener('click', (e) => {
+    initAudio();
+    e.stopPropagation();
+    resetGame();
+});
+
+function handleInput() {
+    if (gameState === 'PITCHING' && !batter.isSwinging) {
+        swingBat();
+    }
+}
+
+function resetGame() {
+    remainingBalls = 10;
+    homeruns = 0;
+    ballsText.textContent = `残り球数: ${remainingBalls}`;
+    scoreText.textContent = `本塁打: ${homeruns}本`;
+    resultScreen.classList.add('hidden');
+    startPitch();
+}
+
+function startPitch() {
+    if (remainingBalls <= 0) {
+        endGame();
+        return;
+    }
+
+    gameState = 'PITCHING';
+    batter.batAngle = START_BAT_ANGLE;
+    batter.isSwinging = false;
+    batter.swingProgress = 0;
+
+    ball.x = 200;
+    ball.y = 130;
+    ball.height = 0;
+    ball.isHit = false;
+
+    playPitchSE();
+
+    const pitchType = Math.floor(Math.random() * 4);
+    let speed = 4.5;
+    const targetY = 510;
+
+    if (pitchType === 0) {
+        speed = 5.2 + Math.random() * 1.0;
+        ball.vx = 0;
+        ball.curveAccelX = 0;
+    } else if (pitchType === 1) {
+        speed = 3.2;
+        ball.vx = 0;
+        ball.curveAccelX = 0;
+    } else if (pitchType === 2) {
+        speed = 4.2;
+        const frames = (targetY - 130) / speed;
+        ball.curveAccelX = -0.09;
+        ball.vx = -0.5 * ball.curveAccelX * frames; 
+    } else if (pitchType === 3) {
+        speed = 4.4;
+        const frames = (targetY - 130) / speed;
+        ball.curveAccelX = 0.09;
+        ball.vx = -0.5 * ball.curveAccelX * frames;
+    }
+
+    ball.vy = speed;
+}
+
+function swingBat() {
+    batter.isSwinging = true;
+    batter.swingProgress = 0;
+    playSwingSE();
+}
+
+function update() {
+    if (batter.isSwinging) {
+        batter.swingProgress += 0.12; 
+        if (batter.swingProgress <= 1) {
+            batter.batAngle = START_BAT_ANGLE + batter.swingProgress * (END_BAT_ANGLE - START_BAT_ANGLE);
+        } else {
+            batter.isSwinging = false;
+            batter.batAngle = END_BAT_ANGLE; 
+        }
+    }
+
+    if (gameState === 'PITCHING') {
+        ball.vx += ball.curveAccelX;
+        ball.x += ball.vx;
+        ball.y += ball.vy;
+
+        if (batter.isSwinging && !ball.isHit && ball.y >= 470 && ball.y <= 535) {
+            checkHit();
+        }
+
+        if (ball.y > 560 && !ball.isHit) {
+            remainingBalls--;
+            ballsText.textContent = `残り球数: ${remainingBalls}`;
+            playOutSE();
+            showResultText('ストライク！');
+        }
+    }
+
+    if (gameState === 'SWINGING') {
+        ball.x += ball.vx;
+        ball.y += ball.vy;
+        ball.height += ball.vz;
+        ball.vz -= 0.18;
+
+        if (ball.height <= 0) {
+            ball.height = 0;
+            evaluateLanding();
+        }
+    }
+
+    if (gameState === 'RESULT_ANIM') {
+        resultMessageTimer--;
+        if (resultMessageTimer <= 0) {
+            startPitch();
+        }
+    }
+}
+
+function checkHit() {
+    const distToBase = Math.abs(ball.y - homeBase.y);
+    ball.isHit = true;
+    gameState = 'SWINGING';
+
+    remainingBalls--;
+    ballsText.textContent = `残り球数: ${remainingBalls}`;
+
+    let isPerfectHit = false;
+    if (distToBase < 15) {
+        isPerfectHit = true; 
+        ball.vx = (Math.random() - 0.5) * 2;
+        ball.vy = -8 - Math.random() * 2;
+        ball.vz = 5.5 + Math.random() * 1.5;
+    } else if (distToBase < 35) {
+        ball.vx = (Math.random() - 0.5) * 7;
+        ball.vy = -4 - Math.random() * 2;
+        ball.vz = 3;
+    } else {
+        ball.vx = (Math.random() - 0.5) * 3;
+        ball.vy = -1.5;
+        ball.vz = 1;
+    }
+
+    playHitSE();
+}
+
+function evaluateLanding() {
+    const distFromHome = Math.hypot(ball.x - homeBase.x, ball.y - homeBase.y);
+    
+    if (distFromHome > 360 && ball.y < 320) {
+        homeruns++;
+        scoreText.textContent = `本塁打: ${homeruns}本`;
+        playHomerunFanfareSE();
+        showResultText('🎉 ホームラン！');
+    } else if (distFromHome > 160 && ball.y < 460) {
+        showResultText('ヒット！');
+    } else {
+        playOutSE();
+        showResultText('アウト！');
+    }
+}
+
+function showResultText(msg) {
+    resultMessage = msg;
+    resultMessageTimer = 55;
+    gameState = 'RESULT_ANIM';
+}
+
+function endGame() {
+    gameState = 'GAMEOVER';
+    resultTitle.innerHTML = 'ゲーム終了！';
+    resultDesc.textContent = `記録: 10球中 ${homeruns}本塁打`;
+    startBtn.textContent = 'もう一度遊ぶ';
+    resultScreen.classList.remove('hidden');
+}
+
+function drawChibiCharacter(x, y, bodyColor, skinColor, capDrawFunc) {
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.ellipse(x, y + 10, 14, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = skinColor;
+    ctx.beginPath();
+    ctx.arc(x, y, 12, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (capDrawFunc) {
+        capDrawFunc(x, y);
+    }
+}
+
+function drawStripedCap(x, y) {
+    ctx.fillStyle = '#111111';
+    ctx.beginPath();
+    ctx.arc(x, y, 11, Math.PI * 0.8, Math.PI * 2.2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#fbc02d';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x - 5, y - 9);
+    ctx.lineTo(x - 5, y + 2);
+    ctx.moveTo(x, y - 10);
+    ctx.lineTo(x, y + 3);
+    ctx.moveTo(x + 5, y - 9);
+    ctx.lineTo(x + 5, y + 2);
+    ctx.stroke();
+
+    ctx.fillStyle = '#111111';
+    ctx.fillRect(x - 11, y + 1, 22, 3);
+}
+
+function draw() {
+    ctx.clearRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+    ctx.fillStyle = '#2e8b57';
+    ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(200, 510);
+    ctx.lineTo(10, 320);
+    ctx.moveTo(200, 510);
+    ctx.lineTo(390, 320);
+    ctx.stroke();
+
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.moveTo(200, 517);
+    ctx.lineTo(210, 510);
+    ctx.lineTo(210, 503);
+    ctx.lineTo(190, 503);
+    ctx.lineTo(190, 510);
+    ctx.closePath();
+    ctx.fill();
+
+    drawChibiCharacter(200, 545, '#ffffff', '#ffdbac', (cx, cy) => {
+        drawStripedCap(cx, cy);
+        ctx.fillStyle = '#fbc02d';
+        ctx.fillRect(cx - 10, cy + 6, 20, 8);
+    });
+
+    drawChibiCharacter(200, 120, '#ffffff', '#ffdbac', (px, py) => {
+        drawStripedCap(px, py);
+    });
+
+    drawChibiCharacter(batter.x, batter.y, '#ffffff', '#ffdbac', (bx, by) => {
+        ctx.fillStyle = '#0d47a1';
+        ctx.beginPath();
+        ctx.arc(bx, by, 11, Math.PI * 0.8, Math.PI * 2.2);
+        ctx.fill();
+        ctx.fillRect(bx - 11, by + 1, 22, 3);
+    });
+
+    ctx.save();
+    ctx.translate(batter.x, batter.y + 10);
+    ctx.rotate(batter.batAngle);
+    ctx.fillStyle = '#8D5524';
+    ctx.fillRect(0, -3, 38, 6);
+    ctx.restore();
+
+    if (gameState === 'PITCHING' || gameState === 'SWINGING' || gameState === 'RESULT_ANIM') {
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y - ball.height, ball.radius + ball.height * 0.12, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    if (gameState === 'RESULT_ANIM') {
+        ctx.save();
+        ctx.font = 'bold 30px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // ★ lineJoinをroundに設定して、文字の角や線の重なりで突起（黒い山）が出るのを防止
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 4;
+        
+        const textX = Math.round(LOGICAL_WIDTH / 2);
+        const textY = Math.round(290);
+        
+        ctx.strokeStyle = '#000';
+        ctx.strokeText(resultMessage, textX, textY);
+        
+        ctx.fillStyle = '#fff';
+        ctx.fillText(resultMessage, textX, textY);
+        ctx.restore();
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+function gameLoop() {
+    update();
+    draw();
+}
+
+requestAnimationFrame(gameLoop);
+</script>
+
+</body>
+</html>
