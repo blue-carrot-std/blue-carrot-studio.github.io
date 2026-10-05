@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>国道256 Midnight</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #111;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+            width: 480px;
+            height: 720px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            background: #000;
+        }
+        canvas {
+            display: block;
+            background: #333;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 15px;
+            box-sizing: border-box;
+        }
+        .hud-top {
+            display: flex;
+            justify-content: space-between;
+            font-size: 15px;
+            font-weight: bold;
+            text-shadow: 2px 2px 2px #000;
+        }
+        #start-screen, #result-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            text-align: center;
+            z-index: 10;
+        }
+        h1 { margin: 10px 0; font-size: 32px; color: #ffeb3b; text-shadow: 2px 2px #d32f2f; }
+        .studio-text {
+            font-size: 14px;
+            color: #888;
+            letter-spacing: 1px;
+        }
+        .btn {
+            background: #ff5722;
+            color: #fff;
+            border: none;
+            padding: 12px 30px;
+            font-size: 20px;
+            font-weight: bold;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 4px #bf360c;
+            margin-top: 15px;
+            transition: 0.1s;
+        }
+        .btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 0 #bf360c;
+        }
+        .hidden { display: none !important; }
+        #controls-hint {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #aaa;
+            text-align: center;
+        }
+        #speed-boost-msg {
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 24px;
+            color: #00bcd4;
+            font-weight: bold;
+            text-shadow: 2px 2px #fff;
+            pointer-events: none;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="480" height="720"></canvas>
+        
+        <div id="ui-layer">
+            <div class="hud-top">
+                <div id="hud-distance">距離: 0.00km / 20.00km</div>
+                <div id="hud-time">タイム: 0.00秒</div>
+            </div>
+        </div>
+        <div id="speed-boost-msg">SPEED UP!</div>
+
+        <!-- スタート画面 -->
+        <div id="start-screen">
+            <h1>国道256 Midnight</h1>
+            <button class="btn" id="start-btn">ゲームスタート</button>
+            <br><br><br><br><br>
+            <div class="studio-text">Blue Carrot Studio</div>
+        </div>
+
+        <!-- リザルト画面 -->
+        <div id="result-screen" class="hidden">
+            <h1 id="result-title">GOAL!</h1>
+            <p id="result-time-text" style="font-size: 20px; color: #4caf50; font-weight: bold; margin: 5px 0;"></p>
+            <p id="result-rank-text" style="font-size: 22px; color: #ffeb3b; font-weight: bold; margin: 5px 0;"></p>
+            <button class="btn" id="restart-btn">もう一度プレイ</button>
+        </div>
+    </div>
+
+    <div id="controls-hint">操作: 矢印キー [←] [→] または [A] [D] / 画面タップで移動</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const boostMsg = document.getElementById('speed-boost-msg');
+
+// 画像アセットの定義
+const images = {
+    michi: new Image(),
+    car: new Image(),
+    truck1: new Image(),
+    truck2: new Image(),
+    bike: new Image(),
+    dush: new Image()
+};
+
+images.michi.src = 'michi.jpg';
+images.car.src = 'car.png';
+images.truck1.src = 'truck1.png';
+images.truck2.src = 'truck2.png';
+images.bike.src = 'bike.png';
+images.dush.src = 'dush.png';
+
+let gameState = 'START';
+let scoreDistance = 0;
+const goalDistance = 20000; // 20.00km相当
+let gameTime = 0;
+let lastTime = 0;
+let currentScrollSpeed = 7;
+const baseScrollSpeed = 7;
+let isBoosted = false;
+let boostTimer = 0;
+
+const roadLeft = 40;
+const roadRight = 440;
+const roadWidth = roadRight - roadLeft;
+
+const numLanes = 4;
+const laneWidth = roadWidth / numLanes;
+
+// レーン位置の調整
+const lanes = [
+    roadLeft + laneWidth * 0.5 - 20,
+    roadLeft + laneWidth * 1.5 - 12,
+    roadLeft + laneWidth * 2.5 + 12,
+    roadLeft + laneWidth * 3.5 + 20
+];
+const centerDividerX = roadLeft + laneWidth * 2;
+
+const player = {
+    laneIndex: 1,
+    x: lanes[1],
+    y: 530,
+    width: laneWidth - 10,
+    height: 160
+};
+
+let obstacles = [];
+let spawnTimer = 0;
+let spawnCount = 0;
+let roadScrollY = 0;
+
+let audioCtx = null;
+
+function initAudio() {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+}
+
+function playSound(freq, type, duration, endFreq = 0) {
+    if (!audioCtx) return;
+    try {
+        let osc = audioCtx.createOscillator();
+        let gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        if (endFreq > 0) {
+             osc.frequency.exponentialRampToValueAtTime(endFreq, audioCtx.currentTime + duration);
+        }
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    } catch(e) {}
+}
+
+function playCrashSound() { playSound(120, 'square', 0.4, 20); }
+function playFanfare() {
+    if (!audioCtx) return;
+    [261.63, 329.63, 392.00, 523.25].forEach(freq => playSound(freq, 'triangle', 0.3, 0));
+}
+function playBoostSound() { playSound(440, 'sine', 0.2, 880); }
+
+function getRank(time) {
+    if (time < 50) {
+        return "RANK-A King of Kokudo256";
+    } else if (time < 70) {
+        return "RANK-B Super Star";
+    } else if (time < 90) {
+        return "RANK-C Advanced driver";
+    } else if (time < 120) {
+        return "RANK-D A bad driver";
+    } else {
+        return "RANK-E Dangerous driver";
+    }
+}
+
+function startGame() {
+    initAudio();
+    scoreDistance = 0;
+    gameTime = 0;
+    obstacles = [];
+    spawnTimer = 0;
+    spawnCount = 0;
+    player.laneIndex = 1;
+    player.x = lanes[player.laneIndex];
+    gameState = 'PLAYING';
+    currentScrollSpeed = baseScrollSpeed;
+    lastTime = performance.now();
+    
+    document.getElementById('start-screen').classList.add('hidden');
+    document.getElementById('result-screen').classList.add('hidden');
+    boostMsg.style.display = 'none';
+}
+
+window.addEventListener('keydown', (e) => {
+    if (gameState !== 'PLAYING') return;
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+        if (player.laneIndex > 0) player.laneIndex--;
+    } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+        if (player.laneIndex < lanes.length - 1) player.laneIndex++;
+    }
+});
+
+canvas.addEventListener('click', (e) => {
+    if (gameState !== 'PLAYING') return;
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    if (clickX < canvas.width / 2) {
+        if (player.laneIndex > 0) player.laneIndex--;
+    } else {
+        if (player.laneIndex < lanes.length - 1) player.laneIndex++;
+    }
+});
+
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('restart-btn').addEventListener('click', startGame);
+
+function update(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    const deltaTime = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
+
+    if (gameState === 'PLAYING') {
+        gameTime += deltaTime;
+        scoreDistance += currentScrollSpeed * 0.5;
+        roadScrollY = (roadScrollY + currentScrollSpeed) % canvas.height;
+
+        const targetX = lanes[player.laneIndex];
+        player.x += (targetX - player.x) * 0.3;
+
+        if (isBoosted) {
+            boostTimer -= deltaTime;
+            if (boostTimer <= 0) {
+                isBoosted = false;
+                currentScrollSpeed = baseScrollSpeed;
+                boostMsg.style.display = 'none';
+            }
+        }
+
+        if (scoreDistance >= goalDistance) {
+            scoreDistance = goalDistance;
+            gameState = 'GOAL';
+            playFanfare();
+            document.getElementById('result-title').innerText = "GOAL!";
+            document.getElementById('result-title').style.color = "#ffeb3b";
+            document.getElementById('result-time-text').innerText = `ゴールタイム: ${gameTime.toFixed(2)} 秒`;
+            document.getElementById('result-rank-text').innerText = getRank(gameTime);
+            document.getElementById('result-screen').classList.remove('hidden');
+        }
+
+        spawnTimer++;
+        if (spawnTimer > 40) {
+            spawnTimer = 0;
+            spawnCount++;
+            
+            const isLateGame = scoreDistance >= 10000; // 後半（10km以降）判定
+
+            if (isLateGame) {
+                // 後半：バイクまたはダッシュプレートを重複しないよう生成
+                let availableLanes = [0, 1, 2, 3];
+                obstacles.forEach(obs => {
+                    if (obs.y < 50) {
+                        availableLanes = availableLanes.filter(l => l !== obs.laneIndex);
+                    }
+                });
+
+                if (availableLanes.length > 0) {
+                    let laneIdx = availableLanes[Math.floor(Math.random() * availableLanes.length)];
+                    let type = (Math.random() < 0.75) ? 'bike' : 'dush';
+                    let startY = -150;
+
+                    obstacles.push({
+                        laneIndex: laneIdx,
+                        x: lanes[laneIdx],
+                        y: startY,
+                        type: type
+                    });
+                }
+            } else {
+                // 前半：通常通りトラック＆ダッシュプレート
+                const selector = spawnCount % 3;
+                let laneIdx, type, startY;
+
+                if (selector === 0) {
+                    laneIdx = spawnCount % 2;
+                    type = 'truck1';
+                    startY = -200 - Math.random() * 150;
+                } else if (selector === 1) {
+                    laneIdx = 2 + (spawnCount % 2);
+                    type = 'truck2';
+                    startY = -150;
+                } else {
+                    laneIdx = spawnCount % lanes.length;
+                    type = 'dush';
+                    startY = -300 - Math.random() * 200;
+                }
+
+                let canSpawn = true;
+                obstacles.forEach(obs => {
+                    if (obs.laneIndex === laneIdx && obs.y < 80) {
+                        canSpawn = false;
+                    }
+                });
+
+                if (canSpawn) {
+                    obstacles.push({
+                        laneIndex: laneIdx,
+                        x: lanes[laneIdx],
+                        y: startY,
+                        type: type
+                    });
+                }
+            }
+        }
+
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            let obs = obstacles[i];
+            
+            if (obs.type === 'truck1') {
+                obs.y += currentScrollSpeed * 0.4; 
+                if (obs.y > canvas.height + 200) {
+                    obstacles.splice(i, 1);
+                    continue;
+                }
+            } else if (obs.type === 'truck2') {
+                obs.y += currentScrollSpeed * 1.3;
+                if (obs.y > canvas.height + 200) {
+                    obstacles.splice(i, 1);
+                    continue;
+                }
+            } else if (obs.type === 'bike') {
+                if (obs.laneIndex <= 1) {
+                    obs.y += currentScrollSpeed * 0.2;
+                } else {
+                    obs.y += currentScrollSpeed * 1.6;
+                }
+                if (obs.y > canvas.height + 200 || obs.y < -300) {
+                    obstacles.splice(i, 1);
+                    continue;
+                }
+            } else if (obs.type === 'dush') {
+                obs.y += currentScrollSpeed;
+                if (obs.y > canvas.height + 100) {
+                    obstacles.splice(i, 1);
+                    continue;
+                }
+            }
+
+            let hitRangeY = (obs.type === 'dush') ? 50 : 75;
+            let hitRangeX = laneWidth / 1.5;
+            
+            if (Math.abs(player.y - obs.y) < hitRangeY && Math.abs(player.x - obs.x) < hitRangeX) {
+                if (obs.type === 'dush') {
+                    playBoostSound();
+                    currentScrollSpeed = baseScrollSpeed * 2.5;
+                    isBoosted = true;
+                    boostTimer = 3.0;
+                    boostMsg.style.display = 'block';
+                    obstacles.splice(i, 1);
+                } else {
+                    playCrashSound();
+                    gameState = 'GAMEOVER';
+                    document.getElementById('result-title').innerText = "GAME OVER";
+                    document.getElementById('result-title').style.color = "#f44336";
+                    document.getElementById('result-time-text').innerText = `衝突しました！ タイム: ${gameTime.toFixed(2)} 秒`;
+                    document.getElementById('result-rank-text').innerText = "";
+                    document.getElementById('result-screen').classList.remove('hidden');
+                }
+            }
+        }
+    }
+
+    draw();
+    requestAnimationFrame(update);
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 1. 背景（道路）の描画
+    if (images.michi && images.michi.complete && images.michi.naturalWidth > 0) {
+        ctx.drawImage(images.michi, 0, roadScrollY - canvas.height, canvas.width, canvas.height);
+        ctx.drawImage(images.michi, 0, roadScrollY, canvas.width, canvas.height);
+    } else {
+        ctx.fillStyle = '#444';
+        ctx.fillRect(roadLeft, 0, roadWidth, canvas.height);
+    }
+
+    ctx.strokeStyle = '#ffeb3b';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(centerDividerX, 0);
+    ctx.lineTo(centerDividerX, canvas.height);
+    ctx.stroke();
+
+    // 2. ダッシュプレート（dush）の描画
+    obstacles.forEach(obs => {
+        if (obs.type === 'dush') {
+            let dushImg = images.dush;
+            if (dushImg && dushImg.complete && dushImg.naturalWidth > 0) {
+                ctx.save();
+                ctx.translate(obs.x, obs.y);
+                const aspect = dushImg.naturalHeight / dushImg.naturalWidth;
+                const renderWidth = laneWidth * 0.8;
+                const renderHeight = renderWidth * aspect;
+                ctx.drawImage(dushImg, -renderWidth / 2, -renderHeight / 2, renderWidth, renderHeight);
+                ctx.restore();
+            } else {
+                ctx.fillStyle = '#00bcd4';
+                ctx.fillRect(obs.x - laneWidth / 4, obs.y - 30, laneWidth / 2, 60);
+            }
+        }
+    });
+
+    // 3. トラック・バイクの描画
+    obstacles.forEach(obs => {
+        if (obs.type === 'truck1' || obs.type === 'truck2' || obs.type === 'bike') {
+            let targetImg;
+            if (obs.type === 'truck1') targetImg = images.truck1;
+            else if (obs.type === 'truck2') targetImg = images.truck2;
+            else if (obs.type === 'bike') targetImg = images.bike;
+
+            if (targetImg && targetImg.complete && targetImg.naturalWidth > 0) {
+                ctx.save();
+                ctx.translate(obs.x, obs.y);
+                const aspect = targetImg.naturalHeight / targetImg.naturalWidth;
+                const renderWidth = laneWidth * (obs.type === 'bike' ? 0.55 : 0.9);
+                const renderHeight = renderWidth * aspect;
+                ctx.drawImage(targetImg, -renderWidth / 2, -renderHeight / 2, renderWidth, renderHeight);
+                ctx.restore();
+            } else {
+                ctx.fillStyle = (obs.type === 'bike') ? '#76ff03' : (obs.type === 'truck1' ? '#ffb300' : '#e53935');
+                ctx.fillRect(obs.x - laneWidth / 4, obs.y - 50, laneWidth / 2, 100);
+            }
+        }
+    });
+
+    // 4. プレイヤー車の描画
+    if (images.car && images.car.complete && images.car.naturalWidth > 0) {
+        ctx.drawImage(images.car, player.x - player.width / 2, player.y - player.height / 2, player.width, player.height);
+    } else {
+        ctx.fillStyle = '#2196f3';
+        ctx.fillRect(player.x - player.width / 2, player.y - player.height / 2, player.width, player.height);
+    }
+
+    // HUDの更新
+    let currentKm = (scoreDistance / 1000).toFixed(2);
+    let goalKm = (goalDistance / 1000).toFixed(2);
+    document.getElementById('hud-distance').innerText = `距離: ${currentKm}km / ${goalKm}km`;
+    document.getElementById('hud-time').innerText = `タイム: ${gameTime.toFixed(2)}秒`;
+}
+
+requestAnimationFrame(update);
+</script>
+</body>
+</html>
