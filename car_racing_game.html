@@ -327,14 +327,13 @@ function update(timestamp) {
         }
 
         spawnTimer++;
-        if (spawnTimer > 40) {
+        if (spawnTimer > 55) {
             spawnTimer = 0;
             spawnCount++;
             
-            const isLateGame = scoreDistance >= 10000; // 後半（10km以降）判定
+            const isLateGame = scoreDistance >= 10000;
 
             if (isLateGame) {
-                // 後半：バイクまたはダッシュプレートを重複しないよう生成
                 let availableLanes = [0, 1, 2, 3];
                 obstacles.forEach(obs => {
                     if (obs.y < 50) {
@@ -355,7 +354,6 @@ function update(timestamp) {
                     });
                 }
             } else {
-                // 前半：通常通りトラック＆ダッシュプレート
                 const selector = spawnCount % 3;
                 let laneIdx, type, startY;
 
@@ -427,7 +425,20 @@ function update(timestamp) {
             let hitRangeY = (obs.type === 'dush') ? 50 : 75;
             let hitRangeX = laneWidth / 1.5;
             
-            if (Math.abs(player.y - obs.y) < hitRangeY && Math.abs(player.x - obs.x) < hitRangeX) {
+            let isHit = false;
+            if (Math.abs(player.x - obs.x) < hitRangeX) {
+                if (obs.type === 'truck1') {
+                    if (player.y - obs.y > -75 && player.y - obs.y < 75) {
+                        isHit = true;
+                    }
+                } else {
+                    if (Math.abs(player.y - obs.y) < hitRangeY) {
+                        isHit = true;
+                    }
+                }
+            }
+
+            if (isHit) {
                 if (obs.type === 'dush') {
                     playBoostSound();
                     currentScrollSpeed = baseScrollSpeed * 2.5;
@@ -501,6 +512,11 @@ function draw() {
             if (targetImg && targetImg.complete && targetImg.naturalWidth > 0) {
                 ctx.save();
                 ctx.translate(obs.x, obs.y);
+                
+                if (obs.type === 'bike' && obs.laneIndex >= 2) {
+                    ctx.rotate(Math.PI);
+                }
+
                 const aspect = targetImg.naturalHeight / targetImg.naturalWidth;
                 const renderWidth = laneWidth * (obs.type === 'bike' ? 0.55 : 0.9);
                 const renderHeight = renderWidth * aspect;
